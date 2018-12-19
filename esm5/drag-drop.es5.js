@@ -718,10 +718,6 @@ DragRef = /** @class */ (function () {
          */
         this.started = new Subject();
         /**
-         * Emits when the user has released a drag item, before any animations have started.
-         */
-        this.released = new Subject();
-        /**
          * Emits when the user stops dragging an item in the container.
          */
         this.ended = new Subject();
@@ -784,6 +780,7 @@ DragRef = /** @class */ (function () {
                 var distanceX = Math.abs(pointerPosition.x - _this._pickupPositionOnPage.x);
                 /** @type {?} */
                 var distanceY = Math.abs(pointerPosition.y - _this._pickupPositionOnPage.y);
+
                 // Only start dragging after the user has moved more than the minimum distance in either
                 // direction. Note that this is preferrable over doing something like `skip(minimumDistance)`
                 // in the `pointerMove` subscription, because we're not guaranteed to have one move event
@@ -804,11 +801,12 @@ DragRef = /** @class */ (function () {
             }
             /** @type {?} */
             var constrainedPointerPosition = _this._getConstrainedPointerPosition(event);
+            var constrainedPointerPosition2 = _this._getConstrainedPointerPosition2(event,_this._boundaryElement); 
             _this._hasMoved = true;
             event.preventDefault();
             _this._updatePointerDirectionDelta(constrainedPointerPosition);
             if (_this.dropContainer) {
-                _this._updateActiveDropContainer(constrainedPointerPosition);
+                _this._updateActiveDropContainer(constrainedPointerPosition,constrainedPointerPosition2);
             }
             else {
                 /** @type {?} */
@@ -847,22 +845,14 @@ DragRef = /** @class */ (function () {
          * Handler that is invoked when the user lifts their pointer up, after initiating a drag.
          */
         this._pointerUp = function (event) {
-            // Note that here we use `isDragging` from the service, rather than from `this`.
-            // The difference is that the one from the service reflects whether a dragging sequence
-            // has been initiated, whereas the one on `this` includes whether the user has passed
-            // the minimum dragging threshold.
-            if (!_this._dragDropRegistry.isDragging(_this)) {
+            if (!_this.isDragging()) {
                 return;
             }
             _this._removeSubscriptions();
             _this._dragDropRegistry.stopDragging(_this);
-            if (_this._handles) {
-                _this._rootElement.style.webkitTapHighlightColor = _this._rootElementTapHighlight;
-            }
             if (!_this._hasStartedDragging) {
                 return;
             }
-            _this.released.next({ source: _this });
             if (!_this.dropContainer) {
                 // Convert the active transform into a passive one. This means that next time
                 // the user starts dragging the item, its position will be calculated relatively
@@ -1073,7 +1063,6 @@ DragRef = /** @class */ (function () {
         this._removeSubscriptions();
         this.beforeStarted.complete();
         this.started.complete();
-        this.released.complete();
         this.ended.complete();
         this.entered.complete();
         this.exited.complete();
@@ -1236,8 +1225,6 @@ DragRef = /** @class */ (function () {
         /** @type {?} */
         var isAuxiliaryMouseButton = !isTouchSequence && ((/** @type {?} */ (event))).button !== 0;
         /** @type {?} */
-        var rootElement = this._rootElement;
-        /** @type {?} */
         var isSyntheticEvent = !isTouchSequence && this._lastTouchEventTime &&
             this._lastTouchEventTime + MOUSE_EVENT_IGNORE_TIME > Date.now();
         // If the event started from an element with the native HTML drag&drop, it'll interfere
@@ -1258,13 +1245,6 @@ DragRef = /** @class */ (function () {
         if (this._initialTransform == null) {
             this._initialTransform = this._rootElement.style.transform || '';
         }
-        // If we've got handles, we need to disable the tap highlight on the entire root element,
-        // otherwise iOS will still add it, even though all the drag interactions on the handle
-        // are disabled.
-        if (this._handles.length) {
-            this._rootElementTapHighlight = rootElement.style.webkitTapHighlightColor;
-            rootElement.style.webkitTapHighlightColor = 'transparent';
-        }
         this._toggleNativeDragInteractions();
         this._hasStartedDragging = this._hasMoved = false;
         this._initialContainer = (/** @type {?} */ (this.dropContainer));
@@ -1272,6 +1252,7 @@ DragRef = /** @class */ (function () {
         this._pointerUpSubscription = this._dragDropRegistry.pointerUp.subscribe(this._pointerUp);
         this._scrollPosition = this._viewportRuler.getViewportScrollPosition();
         if (this._boundaryElement) {
+            this.initialScrollPosition=this._boundaryElement.scrollTop;
             this._boundaryRect = this._boundaryElement.getBoundingClientRect();
         }
         // If we have a custom preview template, the element won't be visible anyway so we avoid the
@@ -1353,9 +1334,10 @@ DragRef = /** @class */ (function () {
      * @param {?} __0
      * @return {?}
      */
-    function (_a) {
+    function (_a,_b) {
         var _this = this;
         var x = _a.x, y = _a.y;
+        var x1=_b.x, y1=_b.y;
         // Drop container that draggable has been moved into.
         /** @type {?} */
         var newContainer = (/** @type {?} */ (this.dropContainer))._getSiblingContainerFromPosition(this, x, y);
@@ -1378,7 +1360,7 @@ DragRef = /** @class */ (function () {
                 _this.dropContainer.enter(_this, x, y);
             });
         }
-        (/** @type {?} */ (this.dropContainer))._sortItem(this, x, y, this._pointerDirectionDelta);
+        (/** @type {?} */ (this.dropContainer))._sortItem(this, x1, y1, this._pointerDirectionDelta);
         this._preview.style.transform =
             getTransform(x - this._pickupPositionInElement.x, y - this._pickupPositionInElement.y);
     };
@@ -1570,6 +1552,22 @@ DragRef = /** @class */ (function () {
             y: point.pageY - this._scrollPosition.top
         };
     };
+    DragRef.prototype._getConstrainedPointerPosition2=
+    function (event,boundaryContainer) {
+        /** @type {?} */
+        var point = this._getPointerPositionOnPage(event);
+        /** @type {?} */
+        var dropContainerLock = this.dropContainer ? this.dropContainer.lockAxis : null;
+        if (this.lockAxis === 'x' || dropContainerLock === 'x') {
+            point.y = this._pickupPositionOnPage.y;
+        }
+        else if (this.lockAxis === 'y' || dropContainerLock === 'y') {
+            point.x = this._pickupPositionOnPage.x;
+        }
+        point.y+=boundaryContainer.scrollTop-this.initialScrollPosition;
+        return point;
+    };
+
     /** Gets the pointer position on the page, accounting for any position constraints. */
     /**
      * Gets the pointer position on the page, accounting for any position constraints.
@@ -1788,10 +1786,6 @@ var CdkDrag = /** @class */ (function () {
          */
         this.started = new EventEmitter();
         /**
-         * Emits when the user has released a drag item, before any animations have started.
-         */
-        this.released = new EventEmitter();
-        /**
          * Emits when the user stops dragging an item in the container.
          */
         this.ended = new EventEmitter();
@@ -1830,10 +1824,7 @@ var CdkDrag = /** @class */ (function () {
             if (!ref.isDragging()) {
                 ref.disabled = _this.disabled;
                 ref.lockAxis = _this.lockAxis;
-                ref
-                    .withBoundaryElement(_this._getBoundaryElement())
-                    .withPlaceholderTemplate(_this._placeholderTemplate)
-                    .withPreviewTemplate(_this._previewTemplate);
+                ref.withBoundaryElement(_this._getBoundaryElement());
             }
         });
         this._proxyEvents(ref);
@@ -1919,7 +1910,10 @@ var CdkDrag = /** @class */ (function () {
                 throw Error("cdkDrag must be attached to an element node. " +
                     ("Currently attached to \"" + rootElement.nodeName + "\"."));
             }
-            _this._dragRef.withRootElement(rootElement);
+            _this._dragRef
+                .withRootElement(rootElement)
+                .withPlaceholderTemplate(_this._placeholderTemplate)
+                .withPreviewTemplate(_this._previewTemplate);
             _this._handles.changes
                 .pipe(startWith(_this._handles))
                 .subscribe(function (handleList) {
@@ -1970,6 +1964,7 @@ var CdkDrag = /** @class */ (function () {
     function () {
         /** @type {?} */
         var selector = this.boundaryElementSelector;
+        this.boundaryTest= selector ? getClosestMatchingAncestor(this.element.nativeElement, selector) : null;
         return selector ? getClosestMatchingAncestor(this.element.nativeElement, selector) : null;
     };
     /**
@@ -1994,9 +1989,6 @@ var CdkDrag = /** @class */ (function () {
         var _this = this;
         ref.started.subscribe(function () {
             _this.started.emit({ source: _this });
-        });
-        ref.released.subscribe(function () {
-            _this.released.emit({ source: _this });
         });
         ref.ended.subscribe(function () {
             _this.ended.emit({ source: _this });
@@ -2057,7 +2049,6 @@ var CdkDrag = /** @class */ (function () {
         boundaryElementSelector: [{ type: Input, args: ['cdkDragBoundary',] }],
         disabled: [{ type: Input, args: ['cdkDragDisabled',] }],
         started: [{ type: Output, args: ['cdkDragStarted',] }],
-        released: [{ type: Output, args: ['cdkDragReleased',] }],
         ended: [{ type: Output, args: ['cdkDragEnded',] }],
         entered: [{ type: Output, args: ['cdkDragEntered',] }],
         exited: [{ type: Output, args: ['cdkDragExited',] }],
@@ -2227,10 +2218,6 @@ DropListRef = /** @class */ (function () {
          * Direction in which the list is oriented.
          */
         this._orientation = 'vertical';
-        /**
-         * Amount of connected siblings that currently have a dragged item.
-         */
-        this._activeSiblings = 0;
         _dragDropRegistry.registerDropContainer(this);
         this._document = _document;
     }
@@ -2277,7 +2264,6 @@ DropListRef = /** @class */ (function () {
         this._isDragging = true;
         this._activeDraggables = this._draggables.slice();
         this._cachePositions();
-        this._positionCache.siblings.forEach(function (sibling) { return sibling.drop._toggleIsReceiving(true); });
     };
     /**
      * Emits an event to indicate that the user moved an item into the container.
@@ -2486,23 +2472,6 @@ DropListRef = /** @class */ (function () {
         return findIndex(items, function (currentItem) { return currentItem.drag === item; });
     };
     /**
-     * Whether the list is able to receive the item that
-     * is currently being dragged inside a connected drop list.
-     */
-    /**
-     * Whether the list is able to receive the item that
-     * is currently being dragged inside a connected drop list.
-     * @return {?}
-     */
-    DropListRef.prototype.isReceiving = /**
-     * Whether the list is able to receive the item that
-     * is currently being dragged inside a connected drop list.
-     * @return {?}
-     */
-    function () {
-        return this._activeSiblings > 0;
-    };
-    /**
      * Sorts an item inside the container based on its position.
      * @param item Item to be sorted.
      * @param pointerX Position of the item along the X axis.
@@ -2527,9 +2496,9 @@ DropListRef = /** @class */ (function () {
      */
     function (item, pointerX, pointerY, pointerDelta) {
         // Don't sort the item if it's out of range.
-        if (!this._isPointerNearDropContainer(pointerX, pointerY)) {
+        /*if (!this._isPointerNearDropContainer(pointerX, pointerY)) {
             return;
-        }
+        }*/
         /** @type {?} */
         var siblings = this._positionCache.items;
         /** @type {?} */
@@ -2651,25 +2620,6 @@ DropListRef = /** @class */ (function () {
             clientRect: drop.element.nativeElement.getBoundingClientRect()
         }); });
     };
-    /**
-     * Toggles whether the list can receive the item that is currently being dragged.
-     * Usually called by a sibling that initiated the dragging.
-     */
-    /**
-     * Toggles whether the list can receive the item that is currently being dragged.
-     * Usually called by a sibling that initiated the dragging.
-     * @param {?} isDragging
-     * @return {?}
-     */
-    DropListRef.prototype._toggleIsReceiving = /**
-     * Toggles whether the list can receive the item that is currently being dragged.
-     * Usually called by a sibling that initiated the dragging.
-     * @param {?} isDragging
-     * @return {?}
-     */
-    function (isDragging) {
-        this._activeSiblings = Math.max(0, this._activeSiblings + (isDragging ? 1 : -1));
-    };
     /** Resets the container to its initial state. */
     /**
      * Resets the container to its initial state.
@@ -2685,7 +2635,6 @@ DropListRef = /** @class */ (function () {
         this._isDragging = false;
         // TODO(crisbeto): may have to wait for the animations to finish.
         this._activeDraggables.forEach(function (item) { return item.getRootElement().style.transform = ''; });
-        this._positionCache.siblings.forEach(function (sibling) { return sibling.drop._toggleIsReceiving(false); });
         this._activeDraggables = [];
         this._positionCache.items = [];
         this._positionCache.siblings = [];
@@ -3362,8 +3311,7 @@ var CdkDropList = /** @class */ (function () {
                     host: {
                         'class': 'cdk-drop-list',
                         '[id]': 'id',
-                        '[class.cdk-drop-list-dragging]': '_dropListRef.isDragging()',
-                        '[class.cdk-drop-list-receiving]': '_dropListRef.isReceiving()',
+                        '[class.cdk-drop-list-dragging]': '_dropListRef.isDragging()'
                     }
                 },] },
     ];
@@ -3435,3 +3383,5 @@ var DragDropModule = /** @class */ (function () {
 
 export { CDK_DROP_LIST, CDK_DROP_LIST_CONTAINER, moveItemInArray, transferArrayItem, copyArrayItem, DragDropModule, DragDropRegistry, CdkDropList, CdkDropListGroup, CDK_DRAG_CONFIG_FACTORY, CDK_DRAG_CONFIG, CdkDrag, CdkDragHandle, CdkDragPreview, CdkDragPlaceholder, CDK_DRAG_PARENT as ɵa };
 //# sourceMappingURL=drag-drop.es5.js.map
+
+
